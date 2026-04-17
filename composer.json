@@ -1,6 +1,7 @@
 {
+    "name": "yourname/webrtc-signaling",
     "require": {
         "cboden/ratchet": "^0.4",
-        "textalk/websocket": "^1.6"
+        "workerman/workerman": "^4.0"
     }
 }

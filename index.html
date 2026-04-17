@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebRTC Monitor Viewer</title>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #f0f0f0; }
+        video { max-width: 90%; margin: 20px auto; background: #000; border-radius: 8px; }
+        #status { margin: 20px; padding: 10px; background: #fff; border-radius: 8px; display: inline-block; }
+        button { padding: 10px 20px; font-size: 16px; margin: 5px; cursor: pointer; }
+        input { padding: 8px; width: 200px; }
+        .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📹 Monitor Viewer</h1>
+        <div>
+            <input type="text" id="roomIdInput" placeholder="Room ID" value="my-room-123">
+            <button id="connectButton">Connect</button>
+        </div>
+        <div id="status">Disconnected</div>
+        <video id="remoteVideo" autoplay playsinline muted></video>
+        <br>
+        <button id="switchCameraButton" disabled>Switch Camera (Front/Back)</button>
+    </div>
+
+    <script>
+        // 🔴 अपना Railway WebSocket URL
+        const signalingServerUrl = 'wss://app-production-d8cf.up.railway.app';
+        
+        let pc;
+        let ws;
+        const remoteVideo = document.getElementById('remoteVideo');
+        const statusDiv = document.getElementById('status');
+        const roomIdInput = document.getElementById('roomIdInput');
+        const switchButton = document.getElementById('switchCameraButton');
+
+        const configuration = {
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        };
+
+        async function connect() {
+            const room = roomIdInput.value.trim();
+            if (!room) {
+                statusDiv.textContent = 'Please enter a room ID';
+                return;
+            }
+            
+            statusDiv.textContent = 'Connecting to signaling server...';
+            
+            ws = new WebSocket(signalingServerUrl);
+            
+            ws.onopen = () => {
+                statusDiv.textContent = 'Connected to server. Joining room...';
+                // रूम जॉइन करें (viewer के रूप में)
+                ws.send(JSON.stringify({ 
+                    type: 'join', 
+                    room: room, 
+                    role: 'viewer' 
+                }));
+            };
+            
+            ws.onmessage = async (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'offer') {
+                    await handleOffer(data);
+                } else if (data.type === 'answer') {
+                    await handleAnswer(data);
+                } else if (data.type === 'candidate') {
+                    handleCandidate(data);
+                } else if (data.type === 'monitor_disconnected') {
+                    statusDiv.textContent = 'Monitor disconnected.';
+                    switchButton.disabled = true;
+                    remoteVideo.srcObject = null;
+                }
+            };
+            
+            ws.onerror = (error) => {
+                statusDiv.textContent = 'WebSocket error';
+                console.error(error);
+            };
+            
+            ws.onclose = () => {
+                statusDiv.textContent = 'Disconnected from server';
+                switchButton.disabled = true;
+            };
+        }
+
+        async function createPeerConnection() {
+            pc = new RTCPeerConnection(configuration);
+
+            pc.ontrack = (event) => {
+                remoteVideo.srcObject = event.streams[0];
+                statusDiv.textContent = 'Stream received!';
+                switchButton.disabled = false;
+            };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    ws.send(JSON.stringify({
+                        type: 'candidate',
+                        room: roomIdInput.value.trim(),
+                        candidate: event.candidate.candidate,
+                        sdpMid: event.candidate.sdpMid,
+                        sdpMLineIndex: event.candidate.sdpMLineIndex
+                    }));
+                }
+            };
+
+            pc.oniceconnectionstatechange = () => {
+                statusDiv.textContent = `ICE state: ${pc.iceConnectionState}`;
+                if (pc.iceConnectionState === 'connected') {
+                    statusDiv.textContent = 'Connected to monitor!';
+                }
+            };
+            
+            // महत्वपूर्ण: transceivers जोड़ें ताकि वीडियो रिसीव हो सके
+            pc.addTransceiver('video', { direction: 'recvonly' });
+            pc.addTransceiver('audio', { direction: 'recvonly' });
+        }
+
+        async function handleOffer(offer) {
+            await createPeerConnection();
+            await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            ws.send(JSON.stringify({
+                type: 'answer',
+                room: roomIdInput.value.trim(),
+                sdp: answer.sdp
+            }));
+        }
+
+        async function handleAnswer(answer) {
+            await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        }
+
+        function handleCandidate(data) {
+            const candidate = new RTCIceCandidate({
+                candidate: data.candidate,
+                sdpMid: data.sdpMid,
+                sdpMLineIndex: data.sdpMLineIndex
+            });
+            pc.addIceCandidate(candidate).catch(e => console.error(e));
+        }
+
+        function switchCamera() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'command',
+                    command: 'switch_camera',
+                    room: roomIdInput.value.trim()
+                }));
+            }
+        }
+
+        document.getElementById('connectButton').onclick = connect;
+        document.getElementById('switchCameraButton').onclick = switchCamera;
+    </script>
+</body>
+</html>

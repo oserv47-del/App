@@ -1,7 +1,0 @@
-{
-    "name": "yourname/webrtc-signaling",
-    "require": {
-        "cboden/ratchet": "^0.4",
-        "workerman/workerman": "^4.0"
-    }
-}
